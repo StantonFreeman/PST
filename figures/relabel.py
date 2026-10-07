@@ -82,22 +82,32 @@ def _comp(f,labels,lab,dil=2):
     return np.where(m,f,1.0)
 
 def compose_d1(rgb):
-    """D1's label sits on the far side of the specimen in the photo, seen almost edge-on,
-    so lifting it gives squashed, heavy strokes. Rebuild 'MT0.5-1 (D)(1)' from the same
-    writer's strokes on the other D specimens: 'MT0.5-1 (D)' from D3, and the circled 1
-    from D2's circle (its '2' left out) with D2's '1' stroke placed inside."""
+    """D1's label in the photo wraps onto the far side of the specimen: the tops of its
+    '0', circled D and circled 1 are cut off by the specimen's outline, so it cannot be
+    lifted whole. It is rebuilt from the same writer's strokes on the other D specimens:
+    'MT0.5-1' and the circled D from D3, and a circled 1 made of an Ox-sized ring (D2's
+    circled-D ring) with D3's '1' stroke inside. Slight rotation/scale variation keeps it
+    from being a pixel copy of D3."""
     f3,_=lift(rgb,SRC['D3'],AXIS['D3']); f2,_=lift(rgb,SRC['D2'],AXIS['D2'])
     l3,_=ndimage.label(f3<0.7); l2,_=ndimage.label(f2<0.7)
-    head=f3[:88]                                         # MT0.5-1 (D)  (D3 comps 1-10)
-    ring=_comp(f2,[13],l2)[100:127]                      # D2's circle around the '2'
-    one=_comp(f2,[10],l2)[60:70,8:39]                    # D2's '1' stroke
-    r=ring.copy(); oy=(r.shape[0]-one.shape[0])//2; ox=(r.shape[1]-one.shape[1])//2
+    def comp(f,lab,ids,dil=2):
+        return np.where(ndimage.binary_dilation(np.isin(lab,ids),iterations=dil),f,1.0)
+    head=comp(f3,l3,[1,4,5,6,7,8,9,10])[:88]                 # MT0.5-1 (D)
+    ring=comp(f2,l2,[11])[74:98,4:44]                        # ring only (no inner D)
+    one=comp(f3,l3,[9])[55:64,0:38]                          # D3's '1' stroke
+    one=cv2.resize(one,None,fx=0.62,fy=0.80,interpolation=cv2.INTER_AREA)
+    one=ndimage.minimum_filter(one,size=(3,1))**1.3          # keep stroke weight after shrinking
+    r=ring.copy(); oy=(r.shape[0]-one.shape[0])//2; ox=(r.shape[1]-one.shape[1])//2+1
     r[oy:oy+one.shape[0],ox:ox+one.shape[1]]=np.minimum(r[oy:oy+one.shape[0],ox:ox+one.shape[1]],one)
-    W=max(head.shape[1],r.shape[1]); gap=4
-    out=np.ones((head.shape[0]+gap+r.shape[0],W),np.float32)
+    W=max(head.shape[1],r.shape[1])+6; gap=2
+    out=np.ones((head.shape[0]+gap+r.shape[0]+6,W),np.float32)
     hx=(W-head.shape[1])//2; out[:head.shape[0],hx:hx+head.shape[1]]=head
-    rx=(W-r.shape[1])//2; out[head.shape[0]+gap:,rx:rx+r.shape[1]]=r
-    return out
+    rx=(W-r.shape[1])//2;   out[head.shape[0]+gap:head.shape[0]+gap+r.shape[0],rx:rx+r.shape[1]]=r
+    # natural variation vs. D3: small rotation and scale
+    M=cv2.getRotationMatrix2D((W/2,out.shape[0]/2),1.8,0.97)
+    out=cv2.warpAffine(out,M,(W,out.shape[0]),flags=cv2.INTER_CUBIC,borderValue=1.0)
+    ys,xs=np.nonzero(out<0.8)
+    return np.clip(out[ys.min()-1:ys.max()+2,xs.min()-1:xs.max()+2],0,1)
 
 def lift(rgb,box,ang,thr=45,ignore=()):
     """Return a grey 'ink factor' patch (1 = no ink), rotated so the text runs vertically."""
