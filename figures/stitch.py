@@ -25,19 +25,34 @@ def stitch(ours,new):
     new=cv2.copyMakeBorder(new,0,max(H-new.shape[0],0),0,max(Wd-new.shape[1],0),cv2.BORDER_REPLICATE)[:H,:Wd]
     out=ours.astype(np.float32)
     frames=[(100,995,'L'),(1008,1910,'R')]
+    go=ours.astype(np.float32).mean(2)
+    def top_edges(g,xs):
+        """Row of the plate's top edge (dark -> bright step) for each column xs."""
+        sub=g[455:505][:,xs]; d=np.diff(cv2.GaussianBlur(sub,(1,3),0),axis=0)
+        return 455+1+np.argmax(d,axis=0)
     for x0,x1,_ in frames:
         Wm,cc=register(ours,new,x0,x1,490,725)
-        print('frame',x0,x1,'ecc %.3f'%cc,'A',Wm.round(4).tolist())
-        warped=cv2.warpAffine(new,Wm,(Wd,H),flags=cv2.INTER_LINEAR|cv2.WARP_INVERSE_MAP,borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
-        # seam: middle of the plate-top bevel (bright band); feather over a few rows
-        g=ours.astype(np.float32).mean(2)
-        cols=np.arange(x0+20,x1-20)
-        Y=np.arange(H)[:,None]; X=np.arange(Wd)[None,:]
-        # find bevel row (brightest band 470-500) in this frame
-        prof=g[460:505,x0+40:x1-40].mean(1); yb=460+int(np.argmax(prof))
-        wy=np.clip((Y-(yb-SEAM))/6,0,1)
+        warp=lambda M: cv2.warpAffine(new,M,(Wd,H),flags=cv2.INTER_LINEAR|cv2.WARP_INVERSE_MAP,
+                                      borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
+        warped=warp(Wm)
+        # snap vertically so the two plates' top edges coincide (ECC fits the plate face;
+        # the edge itself sits a few px lower in the second rendering)
+        xs=np.arange(x0+30,x1-30,3)
+        eo=top_edges(go,xs); en=top_edges(warped.mean(2),xs)
+        dy=float(np.median(en-eo))
+        M2=Wm.copy(); M2[1,2]+=dy                      # inverse map: sample dy rows lower
+        warped=warp(M2)
+        print('frame',x0,x1,'ecc %.3f'%cc,'edge shift %.1f px'%dy)
+        # per-column seam just above our plate's top edge (smoothed), feathered over 5 rows
+        xa=np.arange(Wd); xs_c=np.clip(xa,x0+30,x1-31)
+        e=top_edges(go,np.arange(x0+30,x1-30)).astype(np.float32)
+        e=np.minimum.accumulate(np.r_[e]) if False else e
+        e=cv2.medianBlur(e.astype(np.uint8)[None,:],15)[0].astype(np.float32)
+        seam=np.interp(xa,np.arange(x0+30,x1-30),e)-3
+        Y=np.arange(H)[:,None]
+        wy=np.clip((Y-(seam[None,:]-5))/5,0,1)
         lo=0 if x0<500 else 1001; hi=1001 if x0<500 else Wd
-        wx=((X>=lo)&(X<hi)).astype(np.float32)
+        wx=((np.arange(Wd)>=lo)&(np.arange(Wd)<hi)).astype(np.float32)[None,:]
         w=(wy*wx)[...,None]
         out=out*(1-w)+warped*w
     return np.clip(out,0,255).astype(np.uint8)
