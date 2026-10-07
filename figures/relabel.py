@@ -15,6 +15,7 @@ SRC={'D1':(425,990,515,1120),'D2':(588,959,668,1096),'D3':(743,958,797,1082),
 # from the cylinder edges; the text is rotated by this so it runs along the specimen
 AXIS={'D1':-18.4,'D2':-6.7,'D3':0.0,'A1':-16.0,'A2':-7.1,'A3':3.6}
 # one scale per photo so the handwriting size is consistent (A photo is ~7% closer)
+D1_MODE='composite'  # 'composite' = from D3/D2 strokes; 'own' = D1's own (truncated) strokes, straightened
 SCALE={'D':1.30,'A':1.22}
 DST={'D1':(222,172,342,342),'D2':(438,172,562,338),'D3':(652,172,778,332),
      'A1':(1042,186,1152,382),'A2':(1247,183,1352,377),'A3':(1447,183,1562,374)}
@@ -81,6 +82,25 @@ def _comp(f,labels,lab,dil=2):
     m=ndimage.binary_dilation(np.isin(lab,labels),iterations=dil)
     return np.where(m,f,1.0)
 
+def compose_d1_b(rgb):
+    """Alternative: 'MT0.5-1 (D)' from D3 and a circled 1 the size of the circled 2/3,
+    made from D2's ring with D2's '1' stroke inside at natural weight."""
+    f3,_=lift(rgb,SRC['D3'],AXIS['D3']); f2,_=lift(rgb,SRC['D2'],AXIS['D2'])
+    l3,_=ndimage.label(f3<0.7); l2,_=ndimage.label(f2<0.7)
+    comp=lambda f,lab,ids: np.where(ndimage.binary_dilation(np.isin(lab,ids),iterations=2),f,1.0)
+    head=comp(f3,l3,[1,4,5,6,7,8,9,10])[:88]
+    ring=comp(f2,l2,[13])[100:127]
+    one=comp(f2,l2,[10])[60:70,8:39]
+    one=cv2.resize(one,(int(one.shape[1]*0.82),one.shape[0]),interpolation=cv2.INTER_AREA)
+    r=ring.copy(); oy=(r.shape[0]-one.shape[0])//2; ox=(r.shape[1]-one.shape[1])//2+1
+    r[oy:oy+one.shape[0],ox:ox+one.shape[1]]=np.minimum(r[oy:oy+one.shape[0],ox:ox+one.shape[1]],one)
+    W=max(head.shape[1],r.shape[1])+4
+    out=np.ones((head.shape[0]+3+r.shape[0],W),np.float32)
+    out[:head.shape[0],(W-head.shape[1])//2:(W-head.shape[1])//2+head.shape[1]]=head
+    out[head.shape[0]+3:,(W-r.shape[1])//2:(W-r.shape[1])//2+r.shape[1]]=r
+    ys,xs=np.nonzero(out<0.8)
+    return np.clip(out[max(ys.min()-1,0):ys.max()+2,max(xs.min()-1,0):xs.max()+2],0,1)
+
 def compose_d1(rgb):
     """D1's label in the photo wraps onto the far side of the specimen: the tops of its
     '0', circled D and circled 1 are cut off by the specimen's outline, so it cannot be
@@ -107,7 +127,7 @@ def compose_d1(rgb):
     M=cv2.getRotationMatrix2D((W/2,out.shape[0]/2),1.8,0.97)
     out=cv2.warpAffine(out,M,(W,out.shape[0]),flags=cv2.INTER_CUBIC,borderValue=1.0)
     ys,xs=np.nonzero(out<0.8)
-    return np.clip(out[ys.min()-1:ys.max()+2,xs.min()-1:xs.max()+2],0,1)
+    return np.clip(out[max(ys.min()-1,0):ys.max()+2,max(xs.min()-1,0):xs.max()+2],0,1)
 
 def lift(rgb,box,ang,thr=45,ignore=()):
     """Return a grey 'ink factor' patch (1 = no ink), rotated so the text runs vertically."""
@@ -151,7 +171,10 @@ def main(ai_p,d_p,a_p,out):
         full=np.zeros(ai.shape[:2],np.uint8); full[y0:y1,x0:x1]=m*255
         res=erase(res,full>0,k)
         # 2) lift the real label and scale it to the AI label's length
-        if k=='D1': f,ang=compose_d1(d0),AXIS[k]
+        if k=='D1':
+            if D1_MODE=='composite': f,ang=compose_d1_b(d0),AXIS[k]
+            else:
+                import d1real; f,ang=d1real.build(d0),AXIS[k]
         else: f,ang=lift(d0 if k[0]=='D' else a,SRC[k],AXIS[k],ignore=IGNORE.get(k,()))
         ys,xs=np.nonzero(m)
         cx=x0+xs.mean(); cy=y0+(ys.min()+ys.max())/2

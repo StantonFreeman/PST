@@ -8,15 +8,14 @@
   5. plates.py    - give all eight bays the same regularly placed plate hardware
   6. floor.py     - one continuous floor shadow under the plates
   7. bgclean.py   - smooth the studio background where columns were shifted
-  8. invar3.py    - spacer bay: centre the plate hardware on the invar rod, lift the lower
-                    roller off the plate and show the rod leaving its face and tapering
-                    into the notch, as on the real rig
+  8. invar4.py    - spacer bay: centre the plate hardware on the invar rod and draw the
+                    rod under the roller at its full width
 Needs opencv-contrib-python (cv2.xphoto) for the label erase.
 Usage: python3 edit_ai_figure.py ai.webp D.jpg A.jpg out.png
 """
 import sys, os, tempfile, numpy as np
 from PIL import Image
-import relabel, fixbay4, respace, proportions, plates, floor, bgclean, invar3
+import relabel, fixbay4, respace, proportions, plates, floor, bgclean, invar4
 ai,d,a,out=sys.argv[1:5]
 tmp=os.path.join(tempfile.mkdtemp(),'relabeled.png')
 relabel.main(ai,d,a,tmp)
@@ -26,5 +25,5 @@ y=np.arange(img.shape[0])
 path=np.interp(y,[0,535,570,img.shape[0]],[805,805,768,768])-36-3
 img=respace.stretch_path(img,path,36)
 img=proportions.finish(img)
-img=invar3.build(bgclean.clean(floor.render(plates.build(img))))
+img=invar4.build(bgclean.clean(floor.render(plates.build(img))))
 Image.fromarray(img).save(out)
