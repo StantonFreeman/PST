@@ -80,7 +80,7 @@ def build(img):
             xi=xs.astype(int)
             out[y,xi]=out[y,xi]*(1-fx)+srow*fx
         # ---- 3. roller moved up the rod, lower face drawn, uncovered area filled
-        dx=-k*S
+        dx=(xa-F['xf']) if globals().get('CENTER_HOLE') else -k*S
         x0,x1=int(F['xs']-F['as_']-14),int(F['xs']+F['as_']+14)
         y0,y1=int(F['yb']-F['bs']-S-6),P
         Y,X=np.mgrid[y0:y1,x0:x1].astype(np.float32)
@@ -126,13 +126,14 @@ def build(img):
         rollerpix=rollerpix*(1-0.30*(e*fade)[...,None])
         reg[:]=reg*(1-cov[...,None])+rollerpix*cov[...,None]
         # ---- 4. rod from the face centre, cone into the notch
-        prof=rod_profile(a,F); w=F['w']
+        prof=rod_profile(a,F); w=globals().get('W_ROD',F['w'])
         # spacer width in the notch (from bay 3): measure lit spacer just above the coupling
-        wt=26.0
+        wt=globals().get('WT_CONE',26.0)
         yfn=F['yf']-S
         hb=w/2*F['bf']/F['af']
         yc0,yc1=P-15,P
         def cx(y):
+            if globals().get('CENTER_HOLE'): return np.zeros_like(y)+xa
             return axis(F,y)
         def width(y):
             t=np.clip((y-yc0)/(yc1-yc0),0,1); t=t*t*(3-2*t)
@@ -150,7 +151,7 @@ def build(img):
         t=np.clip((Y-yc0)/(yc1-yc0),0,1)
         sh=sh*(1-0.30*t)                                # cone faces down/away: darker
         col=col*sh[...,None]
-        col=col*(1-0.22*np.exp(-((Y-yc0)/1.3)**2))[...,None]   # edge where the taper starts
+        if wt!=w: col=col*(1-0.22*np.exp(-((Y-yc0)/1.3)**2))[...,None]   # edge where the taper starts
         reg[:]=reg*(1-rc[...,None])+col*rc[...,None]
         ac=cover(lambda x,y: (np.abs((x-cx(y))/(w/2+1.5))<=1)&
                  (np.abs(y-(yfn-(hb+1.2)*np.sqrt(np.clip(1-((x-cx(y))/(w/2+1.5))**2,0,1))))<=1.0)&(y<yfn),X,Y)
