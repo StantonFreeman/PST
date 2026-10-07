@@ -38,7 +38,8 @@ def keep_text(ink):
     ink=np.isin(lab,ok)
     lab,n=ndimage.label(ink); objs=ndimage.find_objects(lab)
     thin=[i+1 for i,o in enumerate(objs)
-          if np.hypot(o[0].stop-o[0].start,o[1].stop-o[1].start)>0.6*H]
+          if np.hypot(o[0].stop-o[0].start,o[1].stop-o[1].start)>0.6*H
+          or (o[0].stop-o[0].start>0.25*H and o[1].stop-o[1].start<7)]   # rod edges
     ink&=~np.isin(lab,thin)
     grp,m=ndimage.label(ndimage.binary_dilation(ink,iterations=9))
     sz=ndimage.sum(ink,grp,range(1,m+1))
@@ -72,12 +73,17 @@ def lift_d1(rgb_unflipped,thr=40):
     ys,xs=np.nonzero(ink)
     return f[ys.min():ys.max()+2,xs.min():xs.max()+2]
 
-def lift(rgb,box,ang,thr=45):
+# non-ink marks inside a label box (photo coords): the rod edge next to A3
+IGNORE={'A3':[(806,970,816,1096),(790,1137,816,1145)]}
+
+def lift(rgb,box,ang,thr=45,ignore=()):
     """Return a grey 'ink factor' patch (1 = no ink), rotated so the text runs vertically."""
     x0,y0,x1,y1=box; pad=30
     X0,Y0,X1,Y1=x0-pad,y0-pad,x1+pad,y1+pad
     reg=rgb[Y0:Y1,X0:X1].astype(np.float32)
-    ink=np.zeros(reg.shape[:2],bool); ink[pad:-pad,pad:-pad]=keep_text(ink_mask(rgb,box,thr,min_peak=95))
+    raw=ink_mask(rgb,box,thr,min_size=4,min_peak=80)
+    for a0,b0,a1,b1 in ignore: raw[max(b0-y0,0):b1-y0,max(a0-x0,0):a1-x0]=False
+    ink=np.zeros(reg.shape[:2],bool); ink[pad:-pad,pad:-pad]=keep_text(raw)
     m=ndimage.binary_dilation(ink,iterations=2)
     clean=cv2.inpaint(reg.astype(np.uint8),(m*255).astype(np.uint8),5,cv2.INPAINT_TELEA).astype(np.float32)
     f=np.where(m,reg.mean(2)/np.maximum(clean.mean(2),1),1.0).clip(0,1)
@@ -113,7 +119,7 @@ def main(ai_p,d_p,a_p,out):
         res=erase(res,full>0,k)
         # 2) lift the real label and scale it to the AI label's length
         if k=='D1': f,ang=lift_d1(d0),AXIS[k]
-        else: f,ang=lift(d0 if k[0]=='D' else a,SRC[k],AXIS[k])
+        else: f,ang=lift(d0 if k[0]=='D' else a,SRC[k],AXIS[k],ignore=IGNORE.get(k,()))
         ys,xs=np.nonzero(m)
         cx=x0+xs.mean(); cy=y0+(ys.min()+ys.max())/2
         s=SCALE[k[0]]

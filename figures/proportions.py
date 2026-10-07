@@ -10,7 +10,7 @@ FRONT=(474,794)      # rows of the front plate (+ its shadow)
 BACK=(78,296)        # rows of the back plate
 W6=6                 # width of the plain strip that gets stretched
 
-def expand(img,rows,x,n,side,lim):
+def expand(img,rows,x,n,side,lim,W6=W6):
     """Stretch the plain strip [x,x+W6) to W6+n px. Content between the strip and
     `lim` (a background column in the gap) moves outward; background past it is lost."""
     out=img.copy(); r0,r1=rows
@@ -43,11 +43,11 @@ def fix(img,cut=988,D=68):
     mid=cut+D//2; W=img.shape[1]
     img=shrink(img,FRONT,175,199,'left',0)
     img=expand(img,FRONT,971,35,'right',mid)
-    img=expand(img,BACK,962,28,'right',mid)
+    img=expand(img,BACK,959,28,'right',mid,W6=4)   # plain strip between rod and edge bevel
     # right frame (+D): front margins 81/123 -> 114/114, back 78/98 -> 98/98
     img=expand(img,FRONT,1003+D,29,'left',mid)
     img=shrink(img,FRONT,1869+D,1874+D,'right',W)
-    img=expand(img,BACK,1008+D,20,'left',mid)
+    img=expand(img,BACK,1013+D,20,'left',mid,W6=4)
     return img[:,19:]     # equal outer margins
 
 
