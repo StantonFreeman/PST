@@ -76,6 +76,29 @@ def lift_d1(rgb_unflipped,thr=40):
 # non-ink marks inside a label box (photo coords): the rod edge next to A3
 IGNORE={'A3':[(806,970,816,1096),(790,1137,816,1145)]}
 
+def _comp(f,labels,lab,dil=2):
+    """Soft ink factor of the given connected components only (1 elsewhere)."""
+    m=ndimage.binary_dilation(np.isin(lab,labels),iterations=dil)
+    return np.where(m,f,1.0)
+
+def compose_d1(rgb):
+    """D1's label sits on the far side of the specimen in the photo, seen almost edge-on,
+    so lifting it gives squashed, heavy strokes. Rebuild 'MT0.5-1 (D)(1)' from the same
+    writer's strokes on the other D specimens: 'MT0.5-1 (D)' from D3, and the circled 1
+    from D2's circle (its '2' left out) with D2's '1' stroke placed inside."""
+    f3,_=lift(rgb,SRC['D3'],AXIS['D3']); f2,_=lift(rgb,SRC['D2'],AXIS['D2'])
+    l3,_=ndimage.label(f3<0.7); l2,_=ndimage.label(f2<0.7)
+    head=f3[:88]                                         # MT0.5-1 (D)  (D3 comps 1-10)
+    ring=_comp(f2,[13],l2)[100:127]                      # D2's circle around the '2'
+    one=_comp(f2,[10],l2)[60:70,8:39]                    # D2's '1' stroke
+    r=ring.copy(); oy=(r.shape[0]-one.shape[0])//2; ox=(r.shape[1]-one.shape[1])//2
+    r[oy:oy+one.shape[0],ox:ox+one.shape[1]]=np.minimum(r[oy:oy+one.shape[0],ox:ox+one.shape[1]],one)
+    W=max(head.shape[1],r.shape[1]); gap=4
+    out=np.ones((head.shape[0]+gap+r.shape[0],W),np.float32)
+    hx=(W-head.shape[1])//2; out[:head.shape[0],hx:hx+head.shape[1]]=head
+    rx=(W-r.shape[1])//2; out[head.shape[0]+gap:,rx:rx+r.shape[1]]=r
+    return out
+
 def lift(rgb,box,ang,thr=45,ignore=()):
     """Return a grey 'ink factor' patch (1 = no ink), rotated so the text runs vertically."""
     x0,y0,x1,y1=box; pad=30
@@ -118,7 +141,7 @@ def main(ai_p,d_p,a_p,out):
         full=np.zeros(ai.shape[:2],np.uint8); full[y0:y1,x0:x1]=m*255
         res=erase(res,full>0,k)
         # 2) lift the real label and scale it to the AI label's length
-        if k=='D1': f,ang=lift_d1(d0),AXIS[k]
+        if k=='D1': f,ang=compose_d1(d0),AXIS[k]
         else: f,ang=lift(d0 if k[0]=='D' else a,SRC[k],AXIS[k],ignore=IGNORE.get(k,()))
         ys,xs=np.nonzero(m)
         cx=x0+xs.mean(); cy=y0+(ys.min()+ys.max())/2
