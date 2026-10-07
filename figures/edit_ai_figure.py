@@ -11,8 +11,10 @@
   8. invar7.py    - spacer bay, as in the rig photos: the invar rod runs straight from the
                     roller across the plate edge into a threaded stud through the notch,
                     hex nut, threads, lock nut (roller left in place)
+  9. stitch.py    - optional: front plates and everything below taken from a second
+                    rendering (bottom.webp), registered per frame
 Needs opencv-contrib-python (cv2.xphoto) for the label erase.
-Usage: python3 edit_ai_figure.py ai.webp D.jpg A.jpg out.png
+Usage: python3 edit_ai_figure.py ai.webp D.jpg A.jpg out.png [bottom.webp]
 """
 import sys, os, tempfile, numpy as np
 from PIL import Image
@@ -27,4 +29,7 @@ path=np.interp(y,[0,535,570,img.shape[0]],[805,805,768,768])-36-3
 img=respace.stretch_path(img,path,36)
 img=proportions.finish(img)
 img=invar7.build(bgclean.clean(floor.render(plates.build(img))))
+if len(sys.argv)>5:
+    import stitch
+    img=stitch.stitch(img,np.array(Image.open(sys.argv[5]).convert('RGB')))
 Image.fromarray(img).save(out)
