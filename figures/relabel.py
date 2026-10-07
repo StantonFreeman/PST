@@ -14,6 +14,8 @@ SRC={'D1':(425,990,515,1120),'D2':(588,959,668,1096),'D3':(743,958,797,1082),
 # specimen axis angle in the photos (deg from vertical, + = top leans left), measured
 # from the cylinder edges; the text is rotated by this so it runs along the specimen
 AXIS={'D1':-18.4,'D2':-6.7,'D3':0.0,'A1':-16.0,'A2':-7.1,'A3':3.6}
+# one scale per photo so the handwriting size is consistent (A photo is ~7% closer)
+SCALE={'D':1.30,'A':1.22}
 DST={'D1':(222,172,342,342),'D2':(438,172,562,338),'D3':(652,172,778,332),
      'A1':(1042,186,1152,382),'A2':(1247,183,1352,377),'A3':(1447,183,1562,374)}
 
@@ -40,7 +42,35 @@ def keep_text(ink):
     ink&=~np.isin(lab,thin)
     grp,m=ndimage.label(ndimage.binary_dilation(ink,iterations=9))
     sz=ndimage.sum(ink,grp,range(1,m+1))
-    return ink&np.isin(grp,1+np.where(sz>=0.08*sz.sum())[0])
+    ink&=np.isin(grp,1+np.where(sz>=0.08*sz.sum())[0])
+    lab,n=ndimage.label(ink); sz=ndimage.sum(ink,lab,range(1,n+1))
+    return np.isin(lab,1+np.where(sz>=5)[0])
+
+# D1: axis point, axis direction (down the specimen) and radius, measured from the
+# cylinder edges at the label height in the D photo (unflipped)
+D1_CYL=dict(p0=(498.0,1000.0),d=(-0.3,1.0),R=44.0,t=(-35,165),s=(-0.97,0.97))
+
+def unwrap(rgb,p0,d,R,t,s):
+    """Sample the cylinder surface on a (along-axis, arc-length) grid, so text written
+    on the curving side is shown at its true proportions; axis ends up vertical."""
+    d=np.float32(d)/np.hypot(*d); n=np.float32([d[1],-d[0]])
+    if n[0]<0: n=-n
+    T=np.arange(t[0],t[1],dtype=np.float32)
+    S=np.arange(int(s[0]*R*np.pi/2),int(s[1]*R*np.pi/2),dtype=np.float32)
+    TT,SS=np.meshgrid(T,S,indexing='ij'); u=R*np.sin(SS/R)
+    mx=p0[0]+TT*d[0]+u*n[0]; my=p0[1]+TT*d[1]+u*n[1]
+    return cv2.remap(rgb,mx.astype(np.float32),my.astype(np.float32),cv2.INTER_CUBIC)
+
+def lift_d1(rgb_unflipped,thr=40):
+    reg=unwrap(rgb_unflipped,**D1_CYL)[::-1,::-1].copy()   # rotate 180: read like D2/D3
+    H,W=reg.shape[:2]; m=12
+    ink=np.zeros((H,W),bool); ink[m:-m,m:-m]=keep_text(ink_mask(reg,(m,m,W-m,H-m),thr,min_peak=90))
+    mm=ndimage.binary_dilation(ink,iterations=2)
+    clean=cv2.inpaint(reg,(mm*255).astype(np.uint8),5,cv2.INPAINT_TELEA).astype(np.float32)
+    f=np.where(mm,reg.astype(np.float32).mean(2)/np.maximum(clean.mean(2),1),1.0).clip(0,1)
+    f=cv2.erode(f,np.ones((2,2),np.uint8))
+    ys,xs=np.nonzero(ink)
+    return f[ys.min():ys.max()+2,xs.min():xs.max()+2]
 
 def lift(rgb,box,ang,thr=45):
     """Return a grey 'ink factor' patch (1 = no ink), rotated so the text runs vertically."""
@@ -58,22 +88,35 @@ def lift(rgb,box,ang,thr=45):
     ys,xs=np.nonzero(ir)
     return fr[ys.min():ys.max()+1,xs.min():xs.max()+1], ang
 
+def erase(img,mask,k=None,pad=40):
+    """Remove the AI text with frequency-selective-reconstruction inpainting
+    (cv2.xphoto, FSR), which rebuilds the concrete texture rather than smearing it."""
+    ys,xs=np.nonzero(mask)
+    y0,y1=max(ys.min()-pad,0),ys.max()+pad; x0,x1=max(xs.min()-pad,0),xs.max()+pad
+    crop=np.clip(img[y0:y1,x0:x1],0,255).astype(np.uint8)
+    valid=(~mask[y0:y1,x0:x1]).astype(np.uint8)*255
+    dst=np.zeros_like(crop)
+    cv2.xphoto.inpaint(crop,valid,dst,cv2.xphoto.INPAINT_FSR_FAST)
+    out=img.copy(); out[y0:y1,x0:x1]=dst.astype(np.float32)
+    return out
+
 def main(ai_p,d_p,a_p,out):
     ai=np.array(Image.open(ai_p).convert('RGB'))
-    d=np.array(Image.open(d_p).convert('RGB')); flip_label(d,(418,982,522,1132))
+    d0=np.array(Image.open(d_p).convert('RGB'))
     a=np.array(Image.open(a_p).convert('RGB'))
     res=ai.astype(np.float32)
     for k,(x0,y0,x1,y1) in DST.items():
         # 1) erase the AI text
         m=ink_mask(ai,(x0,y0,x1,y1),40,min_size=6)
-        m=ndimage.binary_dilation(m,iterations=3)
+        m=ndimage.binary_dilation(m,iterations=5)
         full=np.zeros(ai.shape[:2],np.uint8); full[y0:y1,x0:x1]=m*255
-        res=cv2.inpaint(np.clip(res,0,255).astype(np.uint8),full,6,cv2.INPAINT_TELEA).astype(np.float32)
+        res=erase(res,full>0,k)
         # 2) lift the real label and scale it to the AI label's length
-        f,ang=lift(d if k[0]=='D' else a,SRC[k],AXIS[k])
+        if k=='D1': f,ang=lift_d1(d0),AXIS[k]
+        else: f,ang=lift(d0 if k[0]=='D' else a,SRC[k],AXIS[k])
         ys,xs=np.nonzero(m)
-        h_ai=ys.max()-ys.min(); cx=x0+xs.mean(); cy=y0+(ys.min()+ys.max())/2
-        s=h_ai/f.shape[0]
+        cx=x0+xs.mean(); cy=y0+(ys.min()+ys.max())/2
+        s=SCALE[k[0]]
         f=cv2.resize(f,None,fx=s,fy=s,interpolation=cv2.INTER_CUBIC).clip(0,1)
         h,w=f.shape; px,py=int(round(cx-w/2)),int(round(cy-h/2))
         res[py:py+h,px:px+w]*=f[...,None]
